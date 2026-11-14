@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ariel Cáceres — Frecuencia Bermejo IA</title>
+<meta name="description" content="Conversá en voz alta con Ariel Cáceres, locutor digital de El Colorado, Formosa.">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#0c1626;color:#fff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+#bg{position:fixed;inset:-30px;background:url(ariel-caceres.jpg) center/cover;filter:blur(24px) brightness(.55) saturate(1.2)}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block}
+header{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 26px;text-align:center;pointer-events:none;background:linear-gradient(#0c1626cc,transparent)}
+h1{margin:0;font:800 clamp(1.05rem,3.6vw,1.8rem)/1.1 system-ui,sans-serif;letter-spacing:.02em;text-shadow:0 2px 10px #000a}
+header p{margin:3px 0 0;font-size:clamp(.74rem,2.3vw,.95rem);color:#9fd0ff;font-weight:600}
+#panel{position:fixed;left:0;right:0;bottom:0;padding:34px 14px calc(env(safe-area-inset-bottom,0px) + 10px);display:flex;flex-direction:column;align-items:center;gap:8px;background:linear-gradient(transparent,#0c1626e8 45%)}
+#cap{min-height:2.7em;max-width:660px;text-align:center;font-size:clamp(.9rem,2.8vw,1.05rem);line-height:1.35;text-shadow:0 1px 4px #000}
+#cap b{color:#ffd166}
+#status{color:#9fd0ff;font-weight:600;font-size:.9rem;text-align:center}
+.btns{position:relative;display:flex;gap:10px;align-items:center;justify-content:center}
+button{font:700 clamp(1rem,3.4vw,1.15rem) system-ui,sans-serif;border:0;border-radius:999px;padding:14px 26px;cursor:pointer;min-height:52px;box-shadow:0 4px 14px #0008}
+#talk{background:#ff6b3d;color:#fff}
+#talk:hover:not(:disabled){background:#ff8259}
+#end{background:#fff;color:#8a1f1f;display:none}
+button:disabled{opacity:.6;cursor:wait}
+button:focus-visible{outline:3px solid #fff;outline-offset:3px}
+#ring{position:absolute;inset:-6px;border-radius:999px;border:3px solid #6dffb0;opacity:0;pointer-events:none;transition:opacity .2s}
+.listening #ring{opacity:.9}
+#ia{color:#cfe3f7;font-size:.76rem;text-align:center;max-width:600px;line-height:1.3}
+#ia b{background:#fff3;border-radius:6px;padding:1px 6px}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+</head>
+<body>
+<div id="bg"></div>
+<canvas id="c" aria-label="Ariel Cáceres, locutor digital, en su cabina de radio"></canvas>
+<header>
+  <h1>Ariel Cáceres</h1>
+  <p>Frecuencia Bermejo IA · El Colorado, Formosa</p>
+</header>
+<div id="panel">
+  <div id="cap" aria-live="polite"></div>
+  <div id="status">Tocá el botón y charlá con Ariel en voz alta</div>
+  <div class="btns" id="btns">
+    <span id="ring"></span>
+    <button id="talk">🎙️ Hablar con Ariel</button>
+    <button id="end">Finalizar conversación</button>
+  </div>
+  <div id="ia"><b>IA</b> Ariel Cáceres es un personaje ficticio creado con inteligencia artificial para la clase de Ética con IA. Su voz es sintética (ElevenLabs) y tu voz se procesa para poder conversar.</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const AGENT_ID = 'agent_2601m7bqjwjgex59rjq4qrcjdznc'; // ID público del agente (no es una clave secreta)
+const IMG = 'ariel-caceres.jpg', IW = 600, IH = 742;
+const $ = id => document.getElementById(id);
+const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const lerp = (a, b, k) => a + (b - a) * k, clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ====== MODELO DE DEFORMACIÓN DEL ROSTRO (coordenadas en píxeles de la foto) ======
+   La foto no se reemplaza ni se redibuja: se deforma localmente (boca/mandíbula, cejas, ojos, cabeza). */
+const CLOSE = 7, HMAX = 22;                       // cierre de labios y apertura máxima de la mandíbula (px)
+const P = {o: 0, rnd: 0, wide: 0, smile: 0, brow: 0, gx: 0, gy: 0, tilt: 0, dx: 0, dy: 0, blink: 0};
+const out = [0, 0];
+function disp(x, y) {
+  let dx = 0, dy = 0; const ax = Math.abs(x - 295);
+  if (ax < 70 && y > 268 && y < 352) { const wx = 1 - sm(34, 70, ax), wy = sm(272, 283, y) * (1 - sm(305, 350, y)); dy += (P.o * HMAX - CLOSE) * wx * wy; }
+  if (y > 250 && y < 310 && ax < 110) { const wm = Math.exp(-(((x - 295) / 50) ** 2 + ((y - 278) / 20) ** 2)); dx += -(x - 295) * wm * (P.rnd * .22 - P.wide * .10); }
+  if (P.smile > .01 && y > 255 && y < 292) for (const c of [[263, 273], [328, 275]]) dy += -P.smile * 3.2 * Math.exp(-(((x - c[0]) / 11) ** 2 + ((y - c[1]) / 9) ** 2));
+  if (y > 180 && y < 215) for (const c of [[268, 197], [326, 199]]) dy += -P.brow * 2.6 * Math.exp(-(((x - c[0]) / 22) ** 2 + ((y - c[1]) / 7) ** 2));
+  if (y > 195 && y < 235) for (const c of [[268, 213], [324, 215]]) {
+    let w = Math.exp(-(((x - c[0]) / 6.5) ** 2 + ((y - c[1]) / 5) ** 2)); dx += P.gx * 3 * w; dy += P.gy * 1.6 * w;
+    if (P.blink > 0) { w = Math.exp(-(((x - c[0]) / 17) ** 2 + ((y - c[1]) / 9.5) ** 2)); dy += -P.blink * .9 * (y - c[1]) * w; }
+  }
+  const e = Math.hypot((x - 292) / 112, (y - 195) / 150);
+  if (e < 1) {
+    let wh = 1 - sm(.62, 1, e); if (y > 335) wh *= 1 - sm(335, 365, y);
+    const a = P.tilt * Math.PI / 180, rx = x - 300, ry = y - 350, ca = Math.cos(a), sa = Math.sin(a);
+    dx += wh * (rx * ca - ry * sa - rx + P.dx); dy += wh * (rx * sa + ry * ca - ry + P.dy);
+  }
+  out[0] = dx; out[1] = dy; return out;
+}
+const W = (x, y) => { disp(x, y); return [x + out[0], y + out[1]]; };
+
+/* ====== ESCENA: la foto como textura de una malla deformable ====== */
+const cv = $('c');
+const R = new THREE.WebGLRenderer({canvas: cv, antialias: true, alpha: true});
+R.setPixelRatio(Math.min(devicePixelRatio, 2));
+const S = new THREE.Scene(), cam = new THREE.OrthographicCamera(0, IW, 0, -IH, -10, 10);
+const xs = [0, 42.5, 85, 127.5], ys = [0, 15];
+for (let v = 170; v < 415; v += 3) xs.push(v); xs.push(415, 452, 489, 526, 563, 600);
+for (let v = 30; v < 375; v += 3) ys.push(v); ys.push(375, 420, 470, 520, 575, 630, 690, 742);
+const nx = xs.length, ny = ys.length, bx = new Float32Array(nx * ny), by = new Float32Array(nx * ny);
+const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2), idx = [], act = [];
+for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+  const k = j * nx + i; bx[k] = xs[i]; by[k] = ys[j]; pos.set([xs[i], -ys[j], 0], k * 3); uv.set([xs[i] / IW, 1 - ys[j] / IH], k * 2);
+  if (xs[i] >= 170 && xs[i] <= 415 && ys[j] >= 30 && ys[j] <= 375) act.push(k);
+  if (i < nx - 1 && j < ny - 1) idx.push(k, k + nx, k + 1, k + 1, k + nx, k + nx + 1);
+}
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2)); geo.setIndex(idx);
+const mat = new THREE.MeshBasicMaterial();
+S.add(new THREE.Mesh(geo, mat));
+
+// Capa superpuesta (interior de la boca, línea de labios cerrados, pestañas al parpadear)
+const K = 5, OX = 245, OY = 198, oc = document.createElement('canvas'); oc.width = 100 * K; oc.height = 102 * K;
+const o2 = oc.getContext('2d'), otex = new THREE.CanvasTexture(oc); otex.colorSpace = THREE.SRGBColorSpace;
+const ovl = new THREE.Mesh(new THREE.PlaneGeometry(100, 102), new THREE.MeshBasicMaterial({map: otex, transparent: true, depthTest: false}));
+ovl.position.set(OX + 50, -(OY + 51), 1); S.add(ovl);
+const px = x => (x - OX) * K, py = y => (y - OY) * K;
+function drawOverlay() {
+  o2.clearRect(0, 0, oc.width, oc.height);
+  const m = W(295, 271.8), mx = m[0], yt = m[1], yb = W(295, 279.6)[1], g = yb - yt;
+  if (P.o * HMAX > CLOSE + 1.2 && g > 2.5) {
+    const rx = 14 + g * .6 - P.rnd * 3.5 + P.wide * 3.5;
+    o2.beginPath(); o2.moveTo(px(mx - rx), py(yt));
+    for (let i = 0; i <= 12; i++) { const t = Math.PI * i / 12; o2.lineTo(px(mx - rx * Math.cos(t)), py(yt + g * Math.sin(t) * .98)); }
+    o2.lineTo(px(mx + rx), py(yt)); o2.closePath(); o2.fillStyle = '#280f0e'; o2.fill();
+    const gr = o2.createLinearGradient(0, py(yt), 0, py(yt + g)); gr.addColorStop(0, 'rgba(110,45,45,0)'); gr.addColorStop(1, 'rgba(120,48,48,.6)'); o2.fillStyle = gr; o2.fill();
+    const th = Math.min(4.6, g * .4), tw = rx - 7; o2.fillStyle = 'rgba(224,217,204,.88)';
+    o2.beginPath(); (o2.roundRect ? o2.roundRect(px(mx - tw), py(yt + .1), 2 * tw * K, th * K, 1.6 * K) : o2.rect(px(mx - tw), py(yt + .1), 2 * tw * K, th * K)); o2.fill();
+  } else {
+    const ys_ = W(295, 279.2)[1]; o2.beginPath(); o2.moveTo(px(mx - 26), py(ys_ - .2)); o2.quadraticCurveTo(px(mx), py(ys_ + 2.2), px(mx + 26), py(ys_ - .2));
+    o2.strokeStyle = 'rgba(70,32,30,.65)'; o2.lineWidth = 1.5 * K; o2.lineCap = 'round'; o2.stroke();
+  }
+  if (P.blink > .5) for (const c of [[268, 213], [324, 215]]) {
+    const e = W(c[0], c[1]); o2.beginPath(); o2.ellipse(px(e[0]), py(e[1] - 1), 13 * K, 4 * K, 0, .15 * Math.PI, .85 * Math.PI);
+    o2.strokeStyle = 'rgba(40,28,26,' + (.75 * Math.min(1, (P.blink - .5) * 2)) + ')'; o2.lineWidth = 1.5 * K; o2.stroke();
+  }
+  otex.needsUpdate = true;
+}
+function fit() {
+  const w = innerWidth, h = innerHeight, a = w / h; R.setSize(w, h, false);
+  const vh = a >= IW / IH ? IH : IW / a, vw = vh * a;
+  Object.assign(cam, {left: IW / 2 - vw / 2, right: IW / 2 + vw / 2, top: -IH / 2 + vh / 2, bottom: -IH / 2 - vh / 2}); cam.updateProjectionMatrix();
+}
+addEventListener('resize', fit); fit();
+
+/* ====== AUDIO -> BOCA (sincronización aproximada por intensidad y espectro, no fonética exacta) ====== */
+let conv = null, mode = 'idle', smileT = 0;
+function features() {
+  let L = 0, r = .3, q = .45;
+  try {
+    const d = conv.getOutputByteFrequencyData && conv.getOutputByteFrequencyData();
+    if (d && d.length) {
+      const n = d.length, band = (a, b) => { let s = 0, c = 0; for (let i = Math.max(1, Math.floor(a * n)); i < Math.ceil(b * n); i++) { s += d[i]; c++; } return c ? s / c / 255 : 0; };
+      const lo = band(.01, .04), mi = band(.04, .09), hi = band(.09, .17), tot = lo + mi + hi + 1e-4;
+      L = (lo * 1.0 + mi * 1.0 + hi * .6) / 2.6 * 2.2; r = hi / tot; q = lo / tot;
+    } else L = Math.min(1, conv.getOutputVolume() * 1.6);
+  } catch (e) { try { L = Math.min(1, conv.getOutputVolume() * 1.6); } catch (x) {} }
+  return {L, r, q};
+}
+
+/* ====== ANIMACIÓN ====== */
+let last = performance.now(), t = 0, Lavg = 0, nextBlink = 2, blinkT = -1, dbl = false, nextSac = 1.2, tgx = 0, tgy = 0;
+const ease = (rate, dt) => 1 - Math.pow(1 - rate, dt * 60);
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now; t += dt;
+  const speaking = !!conv && mode === 'speaking', listening = !!conv && mode === 'listening';
+  let L = 0, r = .3, q = .45; if (speaking) ({L, r, q} = features());
+  const open = L > .045 ? clamp((L - .045) / .30, 0, 1) : 0;
+  P.o = lerp(P.o, Math.pow(open, .85), ease(open > P.o ? .55 : .25, dt));            // boca: ataque rápido, cierre algo más lento
+  P.rnd = lerp(P.rnd, open > .2 ? clamp((q - .5) / .3, 0, 1) : 0, ease(.25, dt));     // O/U: labios redondeados
+  P.wide = lerp(P.wide, open > .2 ? clamp((r - .28) / .22, 0, 1) : 0, ease(.25, dt)); // E/I: boca más ancha
+  Lavg += (L - Lavg) * ease(.02, dt); const emph = clamp((L - Lavg) * 3, 0, 1);
+  smileT = Math.max(0, smileT - dt);
+  P.smile = lerp(P.smile, smileT > 0 ? .85 : (listening ? .2 : .1), ease(.06, dt));
+  P.brow = lerp(P.brow, listening ? .4 : speaking ? .08 + .5 * emph : .1, ease(.08, dt));
+  // parpadeo (independiente de la boca): siempre vuelve a ojos abiertos
+  nextBlink -= dt;
+  if (blinkT < 0 && nextBlink <= 0) { blinkT = 0; nextBlink = 2.6 + Math.random() * 3.2; dbl = Math.random() < .15; }
+  if (blinkT >= 0) { blinkT += dt; const d = .17; if (blinkT >= d) { blinkT = -1; P.blink = 0; if (dbl) { dbl = false; nextBlink = .16; } } else P.blink = Math.pow(Math.sin(Math.PI * blinkT / d), 1.4); }
+  // mirada: al espectador la mayor parte del tiempo, con pequeños desvíos coordinados en ambos ojos
+  nextSac -= dt;
+  if (nextSac <= 0) { nextSac = 1.8 + Math.random() * 2.8; const spread = speaking ? .55 : .25; tgx = Math.random() < .55 ? 0 : (Math.random() * 2 - 1) * spread; tgy = Math.random() < .6 ? 0 : (Math.random() * 2 - 1) * spread * .5; }
+  P.gx = lerp(P.gx, tgx, ease(.1, dt)); P.gy = lerp(P.gy, tgy, ease(.1, dt));
+  // cabeza: quieta y atenta al escuchar, movimientos suaves al hablar
+  const tt = listening ? 1.4 + Math.sin(t * .5) * .3 : speaking ? Math.sin(t * .9) * .6 + Math.sin(t * 2.1) * .2 : Math.sin(t * .4) * .35;
+  P.tilt = lerp(P.tilt, tt, ease(.05, dt));
+  P.dx = lerp(P.dx, speaking ? Math.sin(t * .7) * .9 : 0, ease(.05, dt)); P.dy = lerp(P.dy, speaking ? -.7 * emph : 0, ease(.08, dt));
+  for (let n = 0; n < act.length; n++) { const k = act[n]; disp(bx[k], by[k]); pos[k * 3] = bx[k] + out[0]; pos[k * 3 + 1] = -(by[k] + out[1]); }
+  geo.attributes.position.needsUpdate = true; drawOverlay(); R.render(S, cam);
+}
+
+new THREE.TextureLoader().load(IMG, tex => {
+  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; mat.map = tex; mat.needsUpdate = true; R.setAnimationLoop(frame);
+}, undefined, () => { $('status').textContent = 'No se pudo cargar la imagen de Ariel. Subí ariel-caceres.jpg junto a index.html y abrí la página con https.'; });
+
+/* ====== CONVERSACIÓN (ElevenLabs) ====== */
+const talk = $('talk'), end = $('end'), status = $('status'), capEl = $('cap'), btns = $('btns'), ring = $('ring');
+const esc = s => s.replace(/[<>&]/g, c => ({'<': '&lt;', '>': '&gt;', '&': '&amp;'}[c]));
+const showIdle = () => {
+  conv = null; mode = 'idle'; talk.style.display = ''; talk.disabled = false; end.style.display = 'none'; btns.classList.remove('listening');
+  status.textContent = 'Tocá el botón y charlá con Ariel en voz alta';
+};
+async function start() {
+  talk.disabled = true; status.textContent = 'Conectando con Ariel…'; capEl.textContent = '';
+  try { (await navigator.mediaDevices.getUserMedia({audio: true})).getTracks().forEach(x => x.stop()); }
+  catch (e) { status.textContent = 'Necesito permiso para usar el micrófono. Activalo en tu navegador y probá de nuevo.'; talk.disabled = false; return; }
+  try {
+    const {Conversation} = await import('https://cdn.jsdelivr.net/npm/@elevenlabs/client/+esm');
+    const opts = {
+      agentId: AGENT_ID,
+      onConnect: () => { talk.style.display = 'none'; end.style.display = ''; mode = 'listening'; btns.classList.add('listening'); },
+      onDisconnect: showIdle,
+      onError: e => { console.error(e); status.textContent = 'Ups, falló la conexión. Probá de nuevo.'; },
+      onModeChange: ({mode: m}) => {
+        mode = m === 'speaking' ? 'speaking' : 'listening'; btns.classList.toggle('listening', mode === 'listening');
+        status.textContent = mode === 'speaking' ? 'Ariel está hablando…' : 'Ariel te escucha. ¡Hablale!';
+      },
+      onMessage: ({message, source}) => {
+        capEl.innerHTML = '<b>' + (source === 'ai' ? 'Ariel' : 'Vos') + ':</b> ' + esc(message);
+        if (source === 'ai' && /ja,? ?ja|jaja|tremenda|buena onda|chiste|humor|buenas, buenas/i.test(message)) smileT = 3.5;
+      }
+    };
+    try { conv = await Conversation.startSession({...opts, connectionType: 'webrtc'}); }
+    catch (e) { console.warn('WebRTC falló, pruebo WebSocket', e); conv = await Conversation.startSession({...opts, connectionType: 'websocket'}); }
+  } catch (e) { console.error(e); status.textContent = 'No pude conectarme con Ariel. Revisá tu internet y probá de nuevo.'; talk.disabled = false; }
+}
+talk.onclick = start;
+end.onclick = async () => { end.disabled = true; try { await conv?.endSession(); } catch (e) {} end.disabled = false; showIdle(); capEl.textContent = ''; };
+</script>
+</body>
+</html>
